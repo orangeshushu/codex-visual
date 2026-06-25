@@ -1,12 +1,43 @@
 import AppKit
 import Foundation
 
+enum LanguageMode: String, CaseIterable {
+    case system
+    case english
+    case chinese
+
+    static let defaultsKey = "languageMode"
+
+    static var current: LanguageMode {
+        get {
+            if let override = ProcessInfo.processInfo.environment["CODEX_VISUAL_LANGUAGE"] {
+                return override.lowercased().hasPrefix("zh") ? .chinese : .english
+            }
+
+            if let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+               let mode = LanguageMode(rawValue: rawValue) {
+                return mode
+            }
+
+            return .system
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+        }
+    }
+}
+
 enum AppStrings {
     static var usesChinese: Bool {
-        let language = ProcessInfo.processInfo.environment["CODEX_VISUAL_LANGUAGE"]
-            ?? preferredAppleLanguage
-            ?? Locale.preferredLanguages.first
-            ?? "en"
+        let language: String
+        switch LanguageMode.current {
+        case .system:
+            language = preferredAppleLanguage ?? Locale.preferredLanguages.first ?? "en"
+        case .english:
+            language = "en"
+        case .chinese:
+            language = "zh"
+        }
         return language.lowercased().hasPrefix("zh")
     }
 
@@ -43,6 +74,10 @@ enum AppStrings {
     static var displayOrder: String { text("显示顺序: 5小时 / 7天", "Display order: 5-hour / 7-day") }
     static var refreshNow: String { text("立即刷新", "Refresh Now") }
     static var quit: String { text("退出", "Quit") }
+    static var language: String { text("语言", "Language") }
+    static var languageSystem: String { text("跟随系统", "System") }
+    static var languageEnglish: String { "English" }
+    static var languageChinese: String { "中文" }
     static var unknown: String { text("未知", "Unknown") }
     static var codexLogs: String { text("Codex 日志", "Codex logs") }
     static var localCache: String { text("本地缓存", "local cache") }
@@ -108,6 +143,23 @@ enum AppStrings {
     }
 }
 
+enum SnapshotSource {
+    case codexLogs
+    case localCache
+    case migratedCache
+
+    var title: String {
+        switch self {
+        case .codexLogs:
+            return AppStrings.codexLogs
+        case .localCache:
+            return AppStrings.localCache
+        case .migratedCache:
+            return AppStrings.migratedCache
+        }
+    }
+}
+
 struct RateLimitEvent: Codable {
     let type: String
     let planType: String?
@@ -160,7 +212,7 @@ struct QuotaSnapshot {
     let event: RateLimitEvent
     let logDate: Date
     let readDate: Date
-    let source: String
+    let source: SnapshotSource
 }
 
 enum QuotaReadError: Error, LocalizedError {
@@ -258,7 +310,7 @@ final class QuotaReader {
                     event: event,
                     logDate: Date(timeIntervalSince1970: timestamp),
                     readDate: Date(),
-                    source: AppStrings.codexLogs
+                    source: .codexLogs
                 )
             }
         }
@@ -359,11 +411,11 @@ final class QuotaReader {
     }
 
     private func readCache() -> QuotaSnapshot? {
-        readCache(at: cacheURL, source: AppStrings.localCache)
-            ?? readCache(at: legacyCacheURL, source: AppStrings.migratedCache)
+        readCache(at: cacheURL, source: .localCache)
+            ?? readCache(at: legacyCacheURL, source: .migratedCache)
     }
 
-    private func readCache(at url: URL, source: String) -> QuotaSnapshot? {
+    private func readCache(at url: URL, source: SnapshotSource) -> QuotaSnapshot? {
         do {
             let data = try Data(contentsOf: url)
             let cached = try JSONDecoder().decode(CachedSnapshot.self, from: data)
@@ -399,7 +451,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logTimeItem = NSMenuItem()
     private let readTimeItem = NSMenuItem()
     private let errorItem = NSMenuItem()
+    private let languageItem = NSMenuItem()
+    private let languageMenu = NSMenu()
+    private let systemLanguageItem = NSMenuItem()
+    private let englishLanguageItem = NSMenuItem()
+    private let chineseLanguageItem = NSMenuItem()
+    private let refreshItem = NSMenuItem()
+    private let quitItem = NSMenuItem()
     private var timer: Timer?
+    private var latestSnapshot: QuotaSnapshot?
 
     private var quotaDetailItems: [NSMenuItem] {
         [planItem, fiveHourItem, fiveHourResetItem, sevenDayItem, sevenDayResetItem, logTimeItem, readTimeItem]
@@ -432,8 +492,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureMenu() {
         statusItem.button?.title = AppStrings.statusTitlePlaceholder
-        statusItem.button?.toolTip = AppStrings.statusToolTip
-        orderItem.title = AppStrings.displayOrder
         errorItem.isHidden = true
 
         for item in [orderItem, planItem, fiveHourItem, fiveHourResetItem, sevenDayItem, sevenDayResetItem, logTimeItem, readTimeItem, errorItem] {
@@ -444,16 +502,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        let refreshItem = NSMenuItem(title: AppStrings.refreshNow, action: #selector(refresh(_:)), keyEquivalent: "r")
+        configureLanguageMenu()
+        menu.addItem(languageItem)
+
+        menu.addItem(.separator())
+        refreshItem.action = #selector(refresh(_:))
+        refreshItem.keyEquivalent = "r"
         refreshItem.target = self
         menu.addItem(refreshItem)
 
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: AppStrings.quit, action: #selector(quit(_:)), keyEquivalent: "q")
+        quitItem.action = #selector(quit(_:))
+        quitItem.keyEquivalent = "q"
         quitItem.target = self
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        updateStaticMenuText()
+        updateLanguageMenuState()
+    }
+
+    private func configureLanguageMenu() {
+        languageItem.submenu = languageMenu
+
+        systemLanguageItem.action = #selector(selectSystemLanguage(_:))
+        systemLanguageItem.target = self
+        englishLanguageItem.action = #selector(selectEnglishLanguage(_:))
+        englishLanguageItem.target = self
+        chineseLanguageItem.action = #selector(selectChineseLanguage(_:))
+        chineseLanguageItem.target = self
+
+        languageMenu.addItem(systemLanguageItem)
+        languageMenu.addItem(englishLanguageItem)
+        languageMenu.addItem(chineseLanguageItem)
+    }
+
+    private func updateDateFormatters() {
+        timeFormatter.locale = AppStrings.dateLocale
+        timeFormatter.dateFormat = AppStrings.dateFormat
+        shortTimeFormatter.locale = AppStrings.dateLocale
+        shortTimeFormatter.dateFormat = AppStrings.shortTimeFormat
+    }
+
+    private func updateStaticMenuText() {
+        updateDateFormatters()
+        statusItem.button?.toolTip = latestSnapshot.map {
+            AppStrings.quotaToolTip(
+                fiveHour: $0.event.rateLimits.primary.remainingPercent,
+                sevenDay: $0.event.rateLimits.secondary.remainingPercent
+            )
+        } ?? AppStrings.statusToolTip
+        orderItem.title = AppStrings.displayOrder
+        languageItem.title = AppStrings.language
+        systemLanguageItem.title = AppStrings.languageSystem
+        englishLanguageItem.title = AppStrings.languageEnglish
+        chineseLanguageItem.title = AppStrings.languageChinese
+        refreshItem.title = AppStrings.refreshNow
+        quitItem.title = AppStrings.quit
+    }
+
+    private func updateLanguageMenuState() {
+        let currentMode = LanguageMode.current
+        systemLanguageItem.state = currentMode == .system ? .on : .off
+        englishLanguageItem.state = currentMode == .english ? .on : .off
+        chineseLanguageItem.state = currentMode == .chinese ? .on : .off
     }
 
     @objc private func refresh(_ sender: Any?) {
@@ -473,6 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func update(_ snapshot: QuotaSnapshot) {
+        latestSnapshot = snapshot
+        updateStaticMenuText()
         let primary = snapshot.event.rateLimits.primary
         let secondary = snapshot.event.rateLimits.secondary
         let title = "Codex \(primary.remainingPercent) / \(secondary.remainingPercent)%"
@@ -499,11 +613,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         sevenDayResetItem.title = AppStrings.sevenDayReset(timeFormatter.string(from: secondary.resetDate))
         logTimeItem.title = AppStrings.dataSource(
-            source: snapshot.source,
+            source: snapshot.source.title,
             time: timeFormatter.string(from: snapshot.logDate)
         )
         readTimeItem.title = AppStrings.lastRead(shortTimeFormatter.string(from: snapshot.readDate))
         errorItem.isHidden = true
+    }
+
+    @objc private func selectSystemLanguage(_ sender: Any?) {
+        setLanguageMode(.system)
+    }
+
+    @objc private func selectEnglishLanguage(_ sender: Any?) {
+        setLanguageMode(.english)
+    }
+
+    @objc private func selectChineseLanguage(_ sender: Any?) {
+        setLanguageMode(.chinese)
+    }
+
+    private func setLanguageMode(_ mode: LanguageMode) {
+        LanguageMode.current = mode
+        updateLanguageMenuState()
+        updateStaticMenuText()
+
+        if let snapshot = latestSnapshot {
+            update(snapshot)
+        } else {
+            refresh(nil)
+        }
     }
 
     @objc private func quit(_ sender: Any?) {
@@ -520,7 +658,7 @@ if CommandLine.arguments.contains("--print") {
         print("7d_remaining=\(secondary.remainingPercent)")
         print("5h_reset=\(primary.resetDate)")
         print("7d_reset=\(secondary.resetDate)")
-        print("source=\(snapshot.source)")
+        print("source=\(snapshot.source.title)")
     } catch {
         fputs("\(error.localizedDescription)\n", stderr)
         exit(1)
