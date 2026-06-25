@@ -4,12 +4,6 @@
   <img src="assets/menubar.svg" alt="CodexVisual menu bar screenshot" width="520">
 </p>
 
-## Download
-
-Download the latest macOS installer from [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest): open `CodexVisual.dmg`, then drag `CodexVisual.app` into Applications.
-
-中文用户请从 [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest) 下载最新版 `CodexVisual.dmg`，打开后把 `CodexVisual.app` 拖到 Applications。
-
 ## English
 
 CodexVisual is a lightweight macOS menu bar app for checking your remaining Codex quota at a glance.
@@ -21,6 +15,12 @@ Codex 67 / 95%
 ```
 
 The first number is the remaining 5-hour quota. The second number is the remaining 7-day quota.
+
+### Download
+
+[Download CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+
+Open `CodexVisual.dmg`, then drag `CodexVisual.app` into Applications.
 
 ### Features
 
@@ -72,7 +72,7 @@ Click the menu bar item to see the refresh interval and the latest local reading
 
 ### Install, Uninstall, and DMG
 
-Download the latest DMG from [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest), then open `CodexVisual.dmg` and drag `CodexVisual.app` into Applications.
+Download the latest DMG directly: [CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg).
 
 Create a macOS DMG package:
 
@@ -108,6 +108,12 @@ Codex 67 / 95%
 ```
 
 第一个数字是 5 小时额度剩余，第二个数字是 7 天额度剩余。
+
+### 下载
+
+[下载 CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+
+打开 `CodexVisual.dmg` 后，把 `CodexVisual.app` 拖到 Applications。
 
 ### 功能
 
@@ -153,7 +159,7 @@ open build/CodexVisual.app
 
 ### 安装、卸载和 DMG
 
-请从 [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest) 下载最新版 DMG，打开 `CodexVisual.dmg` 后把 `CodexVisual.app` 拖到 Applications。
+直接下载最新版 DMG：[CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)。
 
 生成 macOS DMG 安装包：
 
