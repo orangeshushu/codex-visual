@@ -51,13 +51,15 @@ SCRIPT
 3. 菜单栏会显示 Codex 额度；点击菜单可查看刷新时间。
 
 卸载：
-双击“卸载 CodexVisual.command”。
+方法 1：点击菜单栏里的 CodexVisual，选择“卸载 CodexVisual”。
+方法 2：双击“卸载 CodexVisual.command”。
 
 说明：
 这是一个本地菜单栏 app，只读取 Codex 自己记录的本地额度事件。
 会检查 ~/.codex/logs_2.sqlite 和 ~/.codex/sqlite/logs_2.sqlite。
 如果 Codex 暂时没有写入新的额度事件，菜单栏会显示 Codex -- / --%，点击菜单可查看原因。
 如果一直显示 Codex -- / --%，请先打开 Codex 并发送一条消息，然后在 CodexVisual 菜单里选择“复制诊断信息”。
+后续更新可以直接在 CodexVisual 菜单里选择“检查更新”，无需手动重新下载安装。
 菜单栏数字顺序是：5小时 / 7天，例如 Codex 67 / 95%。
 TEXT
 
