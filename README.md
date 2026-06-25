@@ -4,6 +4,12 @@
   <img src="assets/menubar.svg" alt="CodexVisual menu bar screenshot" width="520">
 </p>
 
+## Download
+
+Download the latest macOS installer from [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest): open `CodexVisual.dmg`, then drag `CodexVisual.app` into Applications.
+
+中文用户请从 [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest) 下载最新版 `CodexVisual.dmg`，打开后把 `CodexVisual.app` 拖到 Applications。
+
 ## English
 
 CodexVisual is a lightweight macOS menu bar app for checking your remaining Codex quota at a glance.
@@ -20,7 +26,7 @@ The first number is the remaining 5-hour quota. The second number is the remaini
 
 - Shows Codex quota directly in the macOS menu bar.
 - Uses the compact `Codex 67 / 95%` format for easier scanning.
-- Shows menu details in English or Chinese based on your macOS language.
+- Shows menu details in English or Chinese, with a manual language selector.
 - Reads the latest local `codex.rate_limits` event from `~/.codex/logs_2.sqlite`.
 - Polls local Codex logs every 60 seconds and caches the latest successful reading.
 - Does not call external APIs and does not read `auth.json`.
@@ -33,6 +39,10 @@ CodexVisual is intentionally small and focused. Compared with [steipete/CodexBar
 ### Data Freshness
 
 CodexVisual is not using an official live quota API. It refreshes by polling local Codex log events every 60 seconds. If Codex has not recently emitted a `codex.rate_limits` event, the app keeps showing the latest cached reading.
+
+### Accounts and Quotas
+
+CodexVisual reads quota events from the local Codex log database. If you sign in to Codex with a different account, the displayed quota will change after Codex writes a new `codex.rate_limits` event for that account. Until then, CodexVisual may still show the latest cached reading from the previous account.
 
 ### Build
 
@@ -97,7 +107,7 @@ Codex 67 / 95%
 
 - 在 macOS 菜单栏直接显示 Codex 额度。
 - 使用更容易扫读的 `Codex 67 / 95%` 格式。
-- 菜单详情会根据 macOS 系统语言自动显示英文或中文。
+- 菜单详情支持英文和中文，并提供手动语言选择。
 - 从本地 `~/.codex/logs_2.sqlite` 读取最新的 `codex.rate_limits` 事件。
 - 每 60 秒轮询一次本地 Codex 日志，并缓存最近一次成功读取的数据。
 - 不访问外网，也不读取 `auth.json`。
@@ -110,6 +120,10 @@ CodexVisual 是一个更轻量、更单一用途的菜单栏工具。相比 [ste
 ### 数据刷新
 
 CodexVisual 不是通过官方实时额度 API 获取数据。它每 60 秒读取一次本地 Codex 日志。如果 Codex 最近没有写入新的 `codex.rate_limits` 事件，应用会继续显示最近一次缓存到的额度数据。
+
+### 账号和额度
+
+CodexVisual 读取的是本地 Codex 日志中的额度事件。如果你在 Codex 中切换到另一个账号，上面的额度会在 Codex 写入新的 `codex.rate_limits` 事件后随之变化。在新事件出现之前，CodexVisual 可能会继续显示上一个账号最近一次缓存到的额度。
 
 ### 构建
 
