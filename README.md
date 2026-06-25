@@ -20,6 +20,7 @@ The first number is the remaining 5-hour quota. The second number is the remaini
 
 - Shows Codex quota directly in the macOS menu bar.
 - Uses the compact `Codex 67 / 95%` format for easier scanning.
+- Shows menu details in English or Chinese based on your macOS language.
 - Reads the latest local `codex.rate_limits` event from `~/.codex/logs_2.sqlite`.
 - Polls local Codex logs every 60 seconds and caches the latest successful reading.
 - Does not call external APIs and does not read `auth.json`.
@@ -54,6 +55,8 @@ open build/CodexVisual.app
 Click the menu bar item to see the refresh interval and the latest local reading time.
 
 ### Install, Uninstall, and DMG
+
+Download the latest DMG from [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest), then open `CodexVisual.dmg` and drag `CodexVisual.app` into Applications.
 
 Create a macOS DMG package:
 
@@ -94,6 +97,7 @@ Codex 67 / 95%
 
 - 在 macOS 菜单栏直接显示 Codex 额度。
 - 使用更容易扫读的 `Codex 67 / 95%` 格式。
+- 菜单详情会根据 macOS 系统语言自动显示英文或中文。
 - 从本地 `~/.codex/logs_2.sqlite` 读取最新的 `codex.rate_limits` 事件。
 - 每 60 秒轮询一次本地 Codex 日志，并缓存最近一次成功读取的数据。
 - 不访问外网，也不读取 `auth.json`。
@@ -128,6 +132,8 @@ open build/CodexVisual.app
 点击菜单栏项目可以查看刷新间隔和最后一次本地读取时间。
 
 ### 安装、卸载和 DMG
+
+请从 [GitHub Releases](https://github.com/orangeshushu/CodexVisual/releases/latest) 下载最新版 DMG，打开 `CodexVisual.dmg` 后把 `CodexVisual.app` 拖到 Applications。
 
 生成 macOS DMG 安装包：
 
