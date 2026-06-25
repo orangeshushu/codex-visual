@@ -317,12 +317,17 @@ final class QuotaReader {
     }
 
     private func readFromLogs(databasePath: String) throws -> QuotaSnapshot? {
-        let exactEventClause = "feedback_log_body like '%Received message {\"type\":\"codex.rate_limits\"%'"
+        let exactEventClause = "instr(feedback_log_body, 'Received message {\"type\":\"codex.rate_limits\"') = 1"
         if let snapshot = try readFromLogs(databasePath: databasePath, whereClause: exactEventClause, limit: 2000) {
             return snapshot
         }
 
-        let broadEventClause = "feedback_log_body like '%codex.rate_limits%'"
+        let broadEventClause = """
+        feedback_log_body like '%codex.rate_limits%'
+        and length(feedback_log_body) < 20000
+        and feedback_log_body not like '%function_call_arguments%'
+        and feedback_log_body not like '%exec_command%'
+        """
         return try readFromLogs(databasePath: databasePath, whereClause: broadEventClause, limit: 200)
     }
 
@@ -358,7 +363,7 @@ final class QuotaReader {
             }
 
             let body = String(parts[1])
-            if let event = extractRateLimitEvent(from: body) {
+            if let event = extractRateLimitEvent(from: body), isCurrentRateLimitEvent(event) {
                 return QuotaSnapshot(
                     event: event,
                     logDate: Date(timeIntervalSince1970: timestamp),
@@ -369,6 +374,11 @@ final class QuotaReader {
         }
 
         return nil
+    }
+
+    private func isCurrentRateLimitEvent(_ event: RateLimitEvent) -> Bool {
+        let now = Date()
+        return event.rateLimits.primary.resetDate > now || event.rateLimits.secondary.resetDate > now
     }
 
     private func runSQLite(databasePath: String, query: String) throws -> String {
@@ -585,6 +595,10 @@ final class QuotaWindowView: NSView {
         configure()
     }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 66)
+    }
+
     private func configure() {
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -672,8 +686,12 @@ final class QuotaOverviewView: NSView {
         configure()
     }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 532, height: 226)
+    }
+
     private func configure() {
-        frame.size = NSSize(width: 532, height: 202)
+        frame.size = intrinsicContentSize
 
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         titleLabel.textColor = .labelColor
@@ -682,9 +700,10 @@ final class QuotaOverviewView: NSView {
         planLabel.textColor = .secondaryLabelColor
         planLabel.alignment = .right
 
-        sourceLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        sourceLabel.font = .systemFont(ofSize: 11, weight: .regular)
         sourceLabel.textColor = .secondaryLabelColor
         sourceLabel.lineBreakMode = .byTruncatingTail
+        sourceLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let header = NSStackView(views: [titleLabel, NSView(), planLabel])
         header.orientation = .horizontal
@@ -794,6 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureMenu() {
+        configureStatusButton()
         statusItem.button?.title = AppStrings.statusTitlePlaceholder
         overviewItem.view = overviewView
         overviewItem.isHidden = true
@@ -827,6 +847,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         updateStaticMenuText()
         updateLanguageMenuState()
+    }
+
+    private func configureStatusButton() {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: iconURL) {
+            image.size = NSSize(width: 16, height: 16)
+            image.isTemplate = false
+            button.image = image
+            button.imagePosition = .imageLeading
+        }
     }
 
     private func configureLanguageMenu() {
