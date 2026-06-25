@@ -82,6 +82,8 @@ enum AppStrings {
     static var codexLogs: String { text("Codex 日志", "Codex logs") }
     static var localCache: String { text("本地缓存", "local cache") }
     static var migratedCache: String { text("旧版缓存", "legacy cache") }
+    static var copyDiagnostics: String { text("复制诊断信息", "Copy Diagnostics") }
+    static var diagnosticsCopied: String { text("诊断信息已复制", "Diagnostics copied") }
 
     static func missingDatabase(_ path: String) -> String {
         text("未找到 Codex 日志数据库: \(path)", "Codex log database not found: \(path)")
@@ -243,38 +245,117 @@ enum QuotaReadError: Error, LocalizedError {
 
 final class QuotaReader {
     private let sqlitePath = "/usr/bin/sqlite3"
-    private let databasePath: String
+    private let databasePaths: [String]
 
-    init(databasePath: String = NSHomeDirectory() + "/.codex/logs_2.sqlite") {
-        self.databasePath = databasePath
+    init(databasePaths: [String]? = nil) {
+        if let override = ProcessInfo.processInfo.environment["CODEX_VISUAL_LOG_DB"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.databasePaths = [override]
+        } else if let databasePaths {
+            self.databasePaths = databasePaths
+        } else {
+            let home = NSHomeDirectory()
+            self.databasePaths = [
+                home + "/.codex/logs_2.sqlite",
+                home + "/.codex/sqlite/logs_2.sqlite"
+            ]
+        }
     }
 
     func readLatest() throws -> QuotaSnapshot {
-        if let liveSnapshot = try readFromLogs() {
-            saveCache(snapshot: liveSnapshot)
-            return liveSnapshot
+        var existingDatabaseSeen = false
+        var sqliteErrors: [String] = []
+
+        for databasePath in databasePaths {
+            guard FileManager.default.fileExists(atPath: databasePath) else {
+                continue
+            }
+
+            existingDatabaseSeen = true
+
+            do {
+                if let liveSnapshot = try readFromLogs(databasePath: databasePath) {
+                    saveCache(snapshot: liveSnapshot)
+                    return liveSnapshot
+                }
+            } catch QuotaReadError.sqliteFailed(let message) {
+                sqliteErrors.append("\(databasePath): \(message)")
+            } catch {
+                throw error
+            }
         }
 
         if let cachedSnapshot = readCache() {
             return cachedSnapshot
         }
 
+        if !sqliteErrors.isEmpty {
+            throw QuotaReadError.sqliteFailed(sqliteErrors.joined(separator: "\n"))
+        }
+
+        if !existingDatabaseSeen {
+            throw QuotaReadError.missingDatabase(databasePaths.joined(separator: ", "))
+        }
+
         throw QuotaReadError.missingEvent
     }
 
-    private func readFromLogs() throws -> QuotaSnapshot? {
-        guard FileManager.default.fileExists(atPath: databasePath) else {
-            throw QuotaReadError.missingDatabase(databasePath)
+    private func readFromLogs(databasePath: String) throws -> QuotaSnapshot? {
+        let exactEventClause = "feedback_log_body like '%Received message {\"type\":\"codex.rate_limits\"%'"
+        if let snapshot = try readFromLogs(databasePath: databasePath, whereClause: exactEventClause, limit: 2000) {
+            return snapshot
         }
 
+        let broadEventClause = "feedback_log_body like '%codex.rate_limits%'"
+        return try readFromLogs(databasePath: databasePath, whereClause: broadEventClause, limit: 200)
+    }
+
+    private func readFromLogs(databasePath: String, whereClause: String, limit: Int) throws -> QuotaSnapshot? {
         let query = """
-        select ts, feedback_log_body
-        from logs
-        where instr(feedback_log_body, 'Received message {"type":"codex.rate_limits"') = 1
-        order by ts desc, ts_nanos desc, id desc
-        limit 50;
+        with candidates as (
+            select
+                ts,
+                feedback_log_body,
+                instr(feedback_log_body, 'codex.rate_limits') as match_pos
+            from logs
+            where \(whereClause)
+            order by ts desc, ts_nanos desc, id desc
+            limit \(limit)
+        )
+        select
+            ts,
+            substr(
+                feedback_log_body,
+                case when match_pos > 128 then match_pos - 128 else 1 end,
+                100000
+            )
+        from candidates
+        ;
         """
 
+        let output = try runSQLite(databasePath: databasePath, query: query)
+
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, let timestamp = TimeInterval(parts[0]) else {
+                continue
+            }
+
+            let body = String(parts[1])
+            if let event = extractRateLimitEvent(from: body) {
+                return QuotaSnapshot(
+                    event: event,
+                    logDate: Date(timeIntervalSince1970: timestamp),
+                    readDate: Date(),
+                    source: .codexLogs
+                )
+            }
+        }
+
+        return nil
+    }
+
+    private func runSQLite(databasePath: String, query: String) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: sqlitePath)
         process.arguments = ["-readonly", "-separator", "\t", databasePath, query]
@@ -298,33 +379,22 @@ final class QuotaReader {
             throw QuotaReadError.sqliteFailed(errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
-        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2, let timestamp = TimeInterval(parts[0]) else {
-                continue
-            }
-
-            let body = String(parts[1])
-            if let event = extractRateLimitEvent(from: body) {
-                return QuotaSnapshot(
-                    event: event,
-                    logDate: Date(timeIntervalSince1970: timestamp),
-                    readDate: Date(),
-                    source: .codexLogs
-                )
-            }
-        }
-
-        return nil
+        return output
     }
 
     private func extractRateLimitEvent(from body: String) -> RateLimitEvent? {
         let needles = ["{\"type\":\"codex.rate_limits\"", "{\\\"type\\\":\\\"codex.rate_limits\\\""]
+        let maxCandidateLength = 100_000
 
         for needle in needles {
             var searchStart = body.startIndex
             while let range = body.range(of: needle, range: searchStart..<body.endIndex) {
-                let rawCandidate = String(body[range.lowerBound...])
+                let candidateEnd = body.index(
+                    range.lowerBound,
+                    offsetBy: maxCandidateLength,
+                    limitedBy: body.endIndex
+                ) ?? body.endIndex
+                let rawCandidate = String(body[range.lowerBound..<candidateEnd])
                 let candidate: String
                 if needle.contains("\\\"") {
                     candidate = rawCandidate
@@ -381,6 +451,51 @@ final class QuotaReader {
         }
 
         return nil
+    }
+
+    func diagnostics() -> String {
+        var lines = [
+            "CodexVisual diagnostics",
+            "Home: \(NSHomeDirectory())",
+            "Checked databases:"
+        ]
+
+        for databasePath in databasePaths {
+            let exists = FileManager.default.fileExists(atPath: databasePath)
+            lines.append("- \(databasePath)")
+            lines.append("  exists: \(exists)")
+
+            guard exists else {
+                continue
+            }
+
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: databasePath) {
+                if let size = attributes[.size] as? NSNumber {
+                    lines.append("  size: \(size.int64Value) bytes")
+                }
+                if let modified = attributes[.modificationDate] as? Date {
+                    lines.append("  modified: \(modified)")
+                }
+            }
+
+            if let total = try? runSQLite(databasePath: databasePath, query: "select count(*) from logs;")
+                .trimmingCharacters(in: .whitespacesAndNewlines) {
+                lines.append("  log rows: \(total)")
+            }
+
+            if let candidates = try? runSQLite(
+                databasePath: databasePath,
+                query: "select count(*) from logs where feedback_log_body like '%codex.rate_limits%';"
+            ).trimmingCharacters(in: .whitespacesAndNewlines) {
+                lines.append("  codex.rate_limits candidates: \(candidates)")
+            }
+        }
+
+        lines.append("Cache: \(cacheURL.path)")
+        lines.append("Cache exists: \(FileManager.default.fileExists(atPath: cacheURL.path))")
+        lines.append("Legacy cache: \(legacyCacheURL.path)")
+        lines.append("Legacy cache exists: \(FileManager.default.fileExists(atPath: legacyCacheURL.path))")
+        return lines.joined(separator: "\n")
     }
 
     private var cacheURL: URL {
@@ -456,6 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let systemLanguageItem = NSMenuItem()
     private let englishLanguageItem = NSMenuItem()
     private let chineseLanguageItem = NSMenuItem()
+    private let diagnosticsItem = NSMenuItem()
     private let refreshItem = NSMenuItem()
     private let quitItem = NSMenuItem()
     private var timer: Timer?
@@ -506,6 +622,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(languageItem)
 
         menu.addItem(.separator())
+        diagnosticsItem.action = #selector(copyDiagnostics(_:))
+        diagnosticsItem.target = self
+        menu.addItem(diagnosticsItem)
+
         refreshItem.action = #selector(refresh(_:))
         refreshItem.keyEquivalent = "r"
         refreshItem.target = self
@@ -557,6 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemLanguageItem.title = AppStrings.languageSystem
         englishLanguageItem.title = AppStrings.languageEnglish
         chineseLanguageItem.title = AppStrings.languageChinese
+        diagnosticsItem.title = AppStrings.copyDiagnostics
         refreshItem.title = AppStrings.refreshNow
         quitItem.title = AppStrings.quit
     }
@@ -581,6 +702,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             errorItem.title = error.localizedDescription
             errorItem.isHidden = false
+        }
+    }
+
+    @objc private func copyDiagnostics(_ sender: Any?) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(reader.diagnostics(), forType: .string)
+        diagnosticsItem.title = AppStrings.diagnosticsCopied
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.diagnosticsItem.title = AppStrings.copyDiagnostics
         }
     }
 
@@ -649,7 +779,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-if CommandLine.arguments.contains("--print") {
+if CommandLine.arguments.contains("--diagnostics") {
+    print(QuotaReader().diagnostics())
+} else if CommandLine.arguments.contains("--print") {
     do {
         let snapshot = try QuotaReader().readLatest()
         let primary = snapshot.event.rateLimits.primary
