@@ -10,6 +10,7 @@ BUILD_DIR="$ROOT_DIR/build"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 DMG_ROOT="$BUILD_DIR/dmg-root"
 DMG_PATH="$BUILD_DIR/CodexVisual.dmg"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 
 "$ROOT_DIR/scripts/build_app.sh" >/dev/null
 
@@ -66,6 +67,16 @@ TEXT
   -format UDZO \
   "$DMG_PATH" >/dev/null
 
-/usr/bin/codesign --force --sign - "$DMG_PATH" >/dev/null 2>&1 || true
+if [[ -n "$CODE_SIGN_IDENTITY" && "$CODE_SIGN_IDENTITY" != "-" ]]; then
+  /usr/bin/codesign \
+    --force \
+    --sign "$CODE_SIGN_IDENTITY" \
+    --timestamp \
+    "$DMG_PATH" >/dev/null
+
+  /usr/bin/codesign --verify --verbose=2 "$DMG_PATH" >/dev/null
+else
+  echo "Created unsigned DMG. Set CODE_SIGN_IDENTITY to create a public release build." >&2
+fi
 
 echo "$DMG_PATH"
