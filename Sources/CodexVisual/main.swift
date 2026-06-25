@@ -27,6 +27,48 @@ enum LanguageMode: String, CaseIterable {
     }
 }
 
+enum RefreshMode: String, CaseIterable {
+    case smart
+    case everyFiveSeconds
+    case everyFifteenSeconds
+    case everySixtySeconds
+    case everyFiveMinutes
+    case manual
+
+    static let defaultsKey = "refreshMode"
+
+    static var current: RefreshMode {
+        get {
+            if let rawValue = UserDefaults.standard.string(forKey: defaultsKey),
+               let mode = RefreshMode(rawValue: rawValue) {
+                return mode
+            }
+
+            return .smart
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+        }
+    }
+
+    var baseInterval: TimeInterval? {
+        switch self {
+        case .smart:
+            return 15
+        case .everyFiveSeconds:
+            return 5
+        case .everyFifteenSeconds:
+            return 15
+        case .everySixtySeconds:
+            return 60
+        case .everyFiveMinutes:
+            return 300
+        case .manual:
+            return nil
+        }
+    }
+}
+
 enum AppStrings {
     static var usesChinese: Bool {
         let language: String
@@ -74,6 +116,40 @@ enum AppStrings {
     static var displayOrder: String { text("显示顺序: 5小时 / 7天", "Display order: 5-hour / 7-day") }
     static var refreshNow: String { text("立即刷新", "Refresh Now") }
     static var quit: String { text("退出", "Quit") }
+    static var uninstall: String { text("卸载 CodexVisual", "Uninstall CodexVisual") }
+    static var uninstallTitle: String { text("卸载 CodexVisual?", "Uninstall CodexVisual?") }
+    static var uninstallMessage: String {
+        text("这会退出应用，并删除本机安装的 CodexVisual.app 与本地缓存。Codex 登录信息和 Codex 日志不会被删除。",
+             "This will quit the app and remove the installed CodexVisual.app plus local cache. Codex login data and Codex logs will not be removed.")
+    }
+    static var uninstallConfirm: String { text("卸载", "Uninstall") }
+    static var cancel: String { text("取消", "Cancel") }
+    static var uninstallDone: String { text("CodexVisual 已卸载", "CodexVisual has been uninstalled") }
+    static var refreshFrequency: String { text("刷新频率", "Refresh Frequency") }
+    static var refreshSmart: String { text("智能刷新", "Smart") }
+    static var refreshEvery5Seconds: String { text("每 5 秒", "Every 5 seconds") }
+    static var refreshEvery15Seconds: String { text("每 15 秒", "Every 15 seconds") }
+    static var refreshEvery60Seconds: String { text("每 60 秒", "Every 60 seconds") }
+    static var refreshEvery5Minutes: String { text("每 5 分钟", "Every 5 minutes") }
+    static var refreshManual: String { text("手动", "Manual") }
+    static var checkForUpdates: String { text("检查更新", "Check for Updates") }
+    static var checkingUpdates: String { text("正在检查更新...", "Checking for updates...") }
+    static var updateAvailableTitle: String { text("发现新版本", "Update Available") }
+    static func updateAvailableMessage(_ version: String) -> String {
+        text("发现 CodexVisual \(version)。是否自动下载并安装？",
+             "CodexVisual \(version) is available. Download and install it automatically?")
+    }
+    static var updateNow: String { text("立即更新", "Update Now") }
+    static var noUpdateTitle: String { text("已是最新版本", "You're up to date") }
+    static func noUpdateMessage(_ version: String) -> String {
+        text("当前版本 \(version) 已是最新版本。", "Version \(version) is already the latest version.")
+    }
+    static var updateStartedTitle: String { text("开始更新", "Update Started") }
+    static var updateStartedMessage: String {
+        text("CodexVisual 会自动下载新版、替换应用并重新打开。",
+             "CodexVisual will download the new version, replace the app, and reopen automatically.")
+    }
+    static var updateFailedTitle: String { text("检查更新失败", "Update Check Failed") }
     static var language: String { text("语言", "Language") }
     static var languageSystem: String { text("跟随系统", "System") }
     static var languageEnglish: String { "English" }
@@ -153,7 +229,7 @@ enum AppStrings {
     }
 
     static func resetCompact(_ value: String) -> String {
-        text("\(value) 刷新", "resets \(value)")
+        text("下次刷新: \(value)", "next reset: \(value)")
     }
 
     static func sourceCompact(source: String, readTime: String) -> String {
@@ -578,6 +654,31 @@ struct CachedSnapshot: Codable {
     let cachedTimestamp: TimeInterval
 }
 
+struct GitHubRelease: Decodable {
+    let tagName: String
+    let assets: [GitHubAsset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case assets
+    }
+}
+
+struct GitHubAsset: Decodable {
+    let name: String
+    let browserDownloadURL: URL
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
+struct UpdateInfo {
+    let version: String
+    let downloadURL: URL
+}
+
 final class QuotaWindowView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let percentLabel = NSTextField(labelWithString: "")
@@ -596,7 +697,7 @@ final class QuotaWindowView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: 66)
+        NSSize(width: NSView.noIntrinsicMetric, height: 86)
     }
 
     private func configure() {
@@ -604,10 +705,10 @@ final class QuotaWindowView: NSView {
         layer?.cornerRadius = 8
         layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
 
-        nameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        nameLabel.font = .systemFont(ofSize: 16, weight: .semibold)
         nameLabel.textColor = .labelColor
 
-        percentLabel.font = .monospacedDigitSystemFont(ofSize: 28, weight: .bold)
+        percentLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
         percentLabel.textColor = .labelColor
         percentLabel.alignment = .right
         percentLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -615,9 +716,10 @@ final class QuotaWindowView: NSView {
         suffixLabel.font = .systemFont(ofSize: 12, weight: .medium)
         suffixLabel.textColor = .secondaryLabelColor
 
-        detailLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        detailLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
         progress.style = .bar
         progress.isIndeterminate = false
@@ -645,8 +747,8 @@ final class QuotaWindowView: NSView {
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
             progress.heightAnchor.constraint(equalToConstant: 6)
         ])
@@ -687,7 +789,7 @@ final class QuotaOverviewView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 532, height: 226)
+        NSSize(width: 532, height: 268)
     }
 
     private func configure() {
@@ -725,8 +827,8 @@ final class QuotaOverviewView: NSView {
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             fiveHourView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             sevenDayView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fiveHourView.heightAnchor.constraint(equalToConstant: 66),
-            sevenDayView.heightAnchor.constraint(equalToConstant: 66),
+            fiveHourView.heightAnchor.constraint(equalToConstant: 86),
+            sevenDayView.heightAnchor.constraint(equalToConstant: 86),
             sourceLabel.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
     }
@@ -741,18 +843,28 @@ final class QuotaOverviewView: NSView {
             name: AppStrings.fiveHourQuota,
             remaining: primary.remainingPercent,
             used: primary.usedPercent,
-            resetText: timeFormatter.string(from: primary.resetDate)
+            resetText: resetText(for: primary.resetDate, timeFormatter: timeFormatter)
         )
         sevenDayView.update(
             name: AppStrings.sevenDayQuota,
             remaining: secondary.remainingPercent,
             used: secondary.usedPercent,
-            resetText: timeFormatter.string(from: secondary.resetDate)
+            resetText: resetText(for: secondary.resetDate, timeFormatter: timeFormatter)
         )
         sourceLabel.stringValue = AppStrings.sourceCompact(
             source: snapshot.source.title,
             readTime: shortTimeFormatter.string(from: snapshot.readDate)
         )
+    }
+
+    private func resetText(for date: Date, timeFormatter: DateFormatter) -> String {
+        let seconds = date.timeIntervalSinceNow
+        if seconds > 0, seconds < 3600 {
+            let rounded = max(0, Int(ceil(seconds)))
+            return String(format: "%02d:%02d", rounded / 60, rounded % 60)
+        }
+
+        return timeFormatter.string(from: date)
     }
 }
 
@@ -777,8 +889,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let systemLanguageItem = NSMenuItem()
     private let englishLanguageItem = NSMenuItem()
     private let chineseLanguageItem = NSMenuItem()
+    private let refreshFrequencyItem = NSMenuItem()
+    private let refreshFrequencyMenu = NSMenu()
+    private let smartRefreshItem = NSMenuItem()
+    private let fiveSecondRefreshItem = NSMenuItem()
+    private let fifteenSecondRefreshItem = NSMenuItem()
+    private let sixtySecondRefreshItem = NSMenuItem()
+    private let fiveMinuteRefreshItem = NSMenuItem()
+    private let manualRefreshItem = NSMenuItem()
     private let diagnosticsItem = NSMenuItem()
     private let refreshItem = NSMenuItem()
+    private let checkUpdatesItem = NSMenuItem()
+    private let uninstallItem = NSMenuItem()
     private let quitItem = NSMenuItem()
     private var timer: Timer?
     private var latestSnapshot: QuotaSnapshot?
@@ -805,11 +927,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         configureMenu()
         refresh(nil)
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh(nil)
-            }
-        }
     }
 
     private func configureMenu() {
@@ -827,6 +944,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         configureLanguageMenu()
         menu.addItem(languageItem)
+        configureRefreshFrequencyMenu()
+        menu.addItem(refreshFrequencyItem)
 
         menu.addItem(.separator())
         diagnosticsItem.action = #selector(copyDiagnostics(_:))
@@ -838,7 +957,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshItem.target = self
         menu.addItem(refreshItem)
 
+        checkUpdatesItem.action = #selector(checkForUpdates(_:))
+        checkUpdatesItem.target = self
+        menu.addItem(checkUpdatesItem)
+
         menu.addItem(.separator())
+        uninstallItem.action = #selector(uninstall(_:))
+        uninstallItem.target = self
+        menu.addItem(uninstallItem)
+
         quitItem.action = #selector(quit(_:))
         quitItem.keyEquivalent = "q"
         quitItem.target = self
@@ -847,6 +974,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         updateStaticMenuText()
         updateLanguageMenuState()
+        updateRefreshModeMenuState()
     }
 
     private func configureStatusButton() {
@@ -878,6 +1006,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         languageMenu.addItem(chineseLanguageItem)
     }
 
+    private func configureRefreshFrequencyMenu() {
+        refreshFrequencyItem.submenu = refreshFrequencyMenu
+
+        let pairs: [(NSMenuItem, RefreshMode)] = [
+            (smartRefreshItem, .smart),
+            (fiveSecondRefreshItem, .everyFiveSeconds),
+            (fifteenSecondRefreshItem, .everyFifteenSeconds),
+            (sixtySecondRefreshItem, .everySixtySeconds),
+            (fiveMinuteRefreshItem, .everyFiveMinutes),
+            (manualRefreshItem, .manual)
+        ]
+
+        for (item, mode) in pairs {
+            item.action = #selector(selectRefreshMode(_:))
+            item.target = self
+            item.representedObject = mode.rawValue
+            refreshFrequencyMenu.addItem(item)
+        }
+    }
+
     private func updateDateFormatters() {
         timeFormatter.locale = AppStrings.dateLocale
         timeFormatter.dateFormat = AppStrings.dateFormat
@@ -898,8 +1046,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemLanguageItem.title = AppStrings.languageSystem
         englishLanguageItem.title = AppStrings.languageEnglish
         chineseLanguageItem.title = AppStrings.languageChinese
+        refreshFrequencyItem.title = AppStrings.refreshFrequency
+        smartRefreshItem.title = AppStrings.refreshSmart
+        fiveSecondRefreshItem.title = AppStrings.refreshEvery5Seconds
+        fifteenSecondRefreshItem.title = AppStrings.refreshEvery15Seconds
+        sixtySecondRefreshItem.title = AppStrings.refreshEvery60Seconds
+        fiveMinuteRefreshItem.title = AppStrings.refreshEvery5Minutes
+        manualRefreshItem.title = AppStrings.refreshManual
         diagnosticsItem.title = AppStrings.copyDiagnostics
         refreshItem.title = AppStrings.refreshNow
+        checkUpdatesItem.title = AppStrings.checkForUpdates
+        uninstallItem.title = AppStrings.uninstall
         quitItem.title = AppStrings.quit
     }
 
@@ -908,6 +1065,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemLanguageItem.state = currentMode == .system ? .on : .off
         englishLanguageItem.state = currentMode == .english ? .on : .off
         chineseLanguageItem.state = currentMode == .chinese ? .on : .off
+    }
+
+    private func updateRefreshModeMenuState() {
+        let currentMode = RefreshMode.current
+        let pairs: [(NSMenuItem, RefreshMode)] = [
+            (smartRefreshItem, .smart),
+            (fiveSecondRefreshItem, .everyFiveSeconds),
+            (fifteenSecondRefreshItem, .everyFifteenSeconds),
+            (sixtySecondRefreshItem, .everySixtySeconds),
+            (fiveMinuteRefreshItem, .everyFiveMinutes),
+            (manualRefreshItem, .manual)
+        ]
+
+        for (item, mode) in pairs {
+            item.state = currentMode == mode ? .on : .off
+        }
     }
 
     @objc private func refresh(_ sender: Any?) {
@@ -923,6 +1096,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             errorItem.title = error.localizedDescription
             errorItem.isHidden = false
         }
+
+        scheduleNextRefresh()
+    }
+
+    private func scheduleNextRefresh() {
+        timer?.invalidate()
+        timer = nil
+
+        guard let interval = nextRefreshInterval() else {
+            return
+        }
+
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh(nil)
+            }
+        }
+    }
+
+    private func nextRefreshInterval() -> TimeInterval? {
+        guard var interval = RefreshMode.current.baseInterval else {
+            return nil
+        }
+
+        if let snapshot = latestSnapshot {
+            let resetDates = [
+                snapshot.event.rateLimits.primary.resetDate,
+                snapshot.event.rateLimits.secondary.resetDate
+            ]
+
+            for resetDate in resetDates {
+                let secondsUntilReset = resetDate.timeIntervalSinceNow
+                if secondsUntilReset > 0, secondsUntilReset < interval {
+                    interval = max(2, secondsUntilReset + 2)
+                }
+            }
+        }
+
+        return interval
     }
 
     @objc private func copyDiagnostics(_ sender: Any?) {
@@ -931,6 +1143,210 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         diagnosticsItem.title = AppStrings.diagnosticsCopied
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.diagnosticsItem.title = AppStrings.copyDiagnostics
+        }
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        checkUpdatesItem.title = AppStrings.checkingUpdates
+        checkUpdatesItem.isEnabled = false
+
+        Task { @MainActor in
+            await performUpdateCheck()
+        }
+    }
+
+    private func performUpdateCheck() async {
+        defer {
+            checkUpdatesItem.title = AppStrings.checkForUpdates
+            checkUpdatesItem.isEnabled = true
+        }
+
+        do {
+            let update = try await fetchLatestUpdateInfo()
+            let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+
+            guard update.version.compare(currentVersion, options: .numeric) == .orderedDescending else {
+                let alert = NSAlert()
+                alert.messageText = AppStrings.noUpdateTitle
+                alert.informativeText = AppStrings.noUpdateMessage(currentVersion)
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+
+            let alert = NSAlert()
+            alert.messageText = AppStrings.updateAvailableTitle
+            alert.informativeText = AppStrings.updateAvailableMessage(update.version)
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: AppStrings.updateNow)
+            alert.addButton(withTitle: AppStrings.cancel)
+
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+
+            let started = NSAlert()
+            started.messageText = AppStrings.updateStartedTitle
+            started.informativeText = AppStrings.updateStartedMessage
+            started.alertStyle = .informational
+            started.addButton(withTitle: "OK")
+            started.runModal()
+
+            launchUpdateInstaller(update: update)
+            NSApp.terminate(nil)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = AppStrings.updateFailedTitle
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+
+    private func fetchLatestUpdateInfo() async throws -> UpdateInfo {
+        let releaseURL = URL(string: "https://api.github.com/repos/orangeshushu/CodexVisual/releases/latest")!
+        var request = URLRequest(url: releaseURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("CodexVisual", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200..<300).contains(httpResponse.statusCode) {
+            throw NSError(
+                domain: "CodexVisualUpdate",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "GitHub returned HTTP \(httpResponse.statusCode)"]
+            )
+        }
+
+        let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+        guard let asset = release.assets.first(where: { $0.name == "CodexVisual.dmg" }) else {
+            throw NSError(
+                domain: "CodexVisualUpdate",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "CodexVisual.dmg was not found in the latest GitHub release."]
+            )
+        }
+
+        let version = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+        return UpdateInfo(version: version, downloadURL: asset.browserDownloadURL)
+    }
+
+    private func launchUpdateInstaller(update: UpdateInfo) {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("update-codexvisual-\(UUID().uuidString).sh")
+        let downloadURL = shellQuote(update.downloadURL.absoluteString)
+        let version = shellQuote(update.version)
+        let script = """
+        #!/bin/zsh
+        set -euo pipefail
+
+        DMG_URL=\(downloadURL)
+        VERSION=\(version)
+        WORK_DIR="$TMPDIR/CodexVisual-update-$VERSION"
+        DMG_PATH="$WORK_DIR/CodexVisual.dmg"
+        MOUNT_DIR="$WORK_DIR/mount"
+        INSTALL_DIR="$HOME/Applications"
+        INSTALL_APP="$INSTALL_DIR/CodexVisual.app"
+
+        /bin/rm -rf "$WORK_DIR"
+        /bin/mkdir -p "$WORK_DIR" "$MOUNT_DIR" "$INSTALL_DIR"
+        /usr/bin/curl -L --fail --silent --show-error -o "$DMG_PATH" "$DMG_URL"
+        /usr/sbin/spctl -a -t install "$DMG_PATH"
+        /usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" "$DMG_PATH" >/dev/null
+        /usr/bin/pkill -x "CodexVisual" 2>/dev/null || true
+        /bin/rm -rf "$INSTALL_APP"
+        /bin/rm -rf "$HOME/Applications/CodexQuotaBar.app"
+        /bin/rm -rf "$HOME/Applications/Codex Visual.app"
+        /usr/bin/ditto "$MOUNT_DIR/CodexVisual.app" "$INSTALL_APP"
+        /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_APP" 2>/dev/null || true
+        /usr/bin/hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+        /bin/rm -rf "$WORK_DIR"
+        /usr/bin/open -a "$INSTALL_APP"
+        /bin/rm -f "$0"
+        """
+
+        do {
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = [scriptURL.path]
+            try process.run()
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    @objc private func uninstall(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = AppStrings.uninstallTitle
+        alert.informativeText = AppStrings.uninstallMessage
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: AppStrings.uninstallConfirm)
+        alert.addButton(withTitle: AppStrings.cancel)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        launchUninstaller()
+        NSApp.terminate(nil)
+    }
+
+    @objc private func selectRefreshMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = RefreshMode(rawValue: rawValue) else {
+            return
+        }
+
+        RefreshMode.current = mode
+        updateRefreshModeMenuState()
+        scheduleNextRefresh()
+    }
+
+    private func launchUninstaller() {
+        let scriptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("uninstall-codexvisual-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/zsh
+        /bin/sleep 1
+        /usr/bin/pkill -x "CodexVisual" 2>/dev/null || true
+        /usr/bin/pkill -x "CodexQuotaBar" 2>/dev/null || true
+        /bin/rm -rf "$HOME/Applications/CodexVisual.app"
+        /bin/rm -rf "$HOME/Applications/CodexQuotaBar.app"
+        /bin/rm -rf "$HOME/Applications/Codex Visual.app"
+        /bin/rm -rf "$HOME/Library/Application Support/CodexVisual"
+        /bin/rm -rf "$HOME/Library/Application Support/CodexQuotaBar"
+        if [[ -w "/Applications" ]]; then
+          /bin/rm -rf "/Applications/CodexVisual.app"
+          /bin/rm -rf "/Applications/CodexQuotaBar.app"
+          /bin/rm -rf "/Applications/Codex Visual.app"
+        fi
+        /usr/bin/osascript -e 'display notification "\(AppStrings.uninstallDone)" with title "CodexVisual"' 2>/dev/null || true
+        /bin/rm -f "$0"
+        """
+
+        do {
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = [scriptURL.path]
+            try process.run()
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
         }
     }
 
@@ -975,6 +1391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LanguageMode.current = mode
         updateLanguageMenuState()
         updateStaticMenuText()
+        updateRefreshModeMenuState()
 
         if let snapshot = latestSnapshot {
             update(snapshot)
