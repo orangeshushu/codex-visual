@@ -817,7 +817,7 @@ final class QuotaReader {
 
     private func isCurrentRateLimitEvent(_ event: RateLimitEvent) -> Bool {
         let now = Date()
-        return event.rateLimits.primary.resetDate > now || event.rateLimits.secondary.resetDate > now
+        return event.rateLimits.primary.resetDate > now && event.rateLimits.secondary.resetDate > now
     }
 
     private func runSQLite(databasePath: String, query: String) throws -> String {

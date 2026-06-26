@@ -20,7 +20,25 @@ CODE_SIGN_TIMESTAMP="${CODE_SIGN_TIMESTAMP:---timestamp}"
 /bin/cp "$ROOT_DIR/scripts/uninstall.sh" "$DMG_ROOT/Uninstall CodexVisual.command"
 /bin/chmod +x "$DMG_ROOT/Uninstall CodexVisual.command"
 
-/bin/cat > "$DMG_ROOT/使用说明.txt" <<'TEXT'
+/bin/cat > "$DMG_ROOT/Usage Guide.txt" <<'TEXT'
+Install:
+1. Double-click CodexVisual.pkg.
+2. Follow the macOS Installer prompts.
+3. The installer puts CodexVisual in /Applications and opens the app.
+4. The menu bar shows your Codex quota and opens a control window.
+
+Uninstall:
+Option 1: Open the CodexVisual control window, then click "Uninstall CodexVisual".
+Option 2: Double-click "Uninstall CodexVisual.command".
+
+Notes:
+CodexVisual is a local menu bar app. It only reads local quota events written by Codex.
+It checks ~/.codex/sessions, ~/.codex/logs_2.sqlite, and ~/.codex/sqlite/logs_2.sqlite.
+If Codex has not written a current quota event yet, the menu bar shows Codex -- / --% and the control window explains why.
+If Codex -- / --% keeps showing, open Codex, send one message, then choose "Refresh Now" in the control window.
+Future updates can be installed from "Check for Updates" in CodexVisual. You do not need to download manually again.
+The menu bar shows two quota windows by default: 5 hours / 7 days, remaining percentages, and reset countdowns.
+
 安装：
 1. 双击 CodexVisual.pkg。
 2. 按照 macOS Installer 的提示完成安装。
