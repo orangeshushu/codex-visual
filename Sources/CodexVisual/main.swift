@@ -991,7 +991,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.target = self
         button.action = #selector(showMenu(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
     }
 
     @objc private func showMenu(_ sender: Any?) {
@@ -1000,8 +1000,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         button.highlight(true)
-        let point = NSPoint(x: button.bounds.minX, y: button.bounds.minY - 4)
-        menu.popUp(positioning: nil, at: point, in: button)
+        statusItem.popUpMenu(menu)
         button.highlight(false)
     }
 
