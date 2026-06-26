@@ -11,6 +11,7 @@ APP_PATH="$BUILD_DIR/$APP_NAME.app"
 DMG_ROOT="$BUILD_DIR/dmg-root"
 DMG_PATH="$BUILD_DIR/CodexVisual.dmg"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
+CODE_SIGN_TIMESTAMP="${CODE_SIGN_TIMESTAMP:---timestamp}"
 
 "$ROOT_DIR/scripts/build_app.sh" >/dev/null
 
@@ -72,10 +73,17 @@ TEXT
   "$DMG_PATH" >/dev/null
 
 if [[ -n "$CODE_SIGN_IDENTITY" && "$CODE_SIGN_IDENTITY" != "-" ]]; then
+  timestamp_args=()
+  if [[ "$CODE_SIGN_TIMESTAMP" == "none" ]]; then
+    timestamp_args=(--timestamp=none)
+  elif [[ -n "$CODE_SIGN_TIMESTAMP" && "$CODE_SIGN_TIMESTAMP" != "-" ]]; then
+    timestamp_args=("$CODE_SIGN_TIMESTAMP")
+  fi
+
   /usr/bin/codesign \
     --force \
     --sign "$CODE_SIGN_IDENTITY" \
-    --timestamp \
+    "${timestamp_args[@]}" \
     "$DMG_PATH" >/dev/null
 
   /usr/bin/codesign --verify --verbose=2 "$DMG_PATH" >/dev/null
