@@ -5,7 +5,10 @@ APP_NAME="CodexVisual"
 EXECUTABLE_NAME="CodexVisual"
 OLD_EXECUTABLE_NAME="CodexQuotaBar"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-INSTALL_DIR="$HOME/Applications"
+INSTALL_DIR="${INSTALL_DIR:-/Applications}"
+if [[ ! -w "$INSTALL_DIR" ]]; then
+  INSTALL_DIR="$HOME/Applications"
+fi
 INSTALL_APP="$INSTALL_DIR/$APP_NAME.app"
 OLD_INSTALL_APP="$INSTALL_DIR/CodexQuotaBar.app"
 SPACED_INSTALL_APP="$INSTALL_DIR/Codex Visual.app"
@@ -25,6 +28,9 @@ fi
 /bin/rm -rf "$INSTALL_APP"
 /bin/rm -rf "$OLD_INSTALL_APP"
 /bin/rm -rf "$SPACED_INSTALL_APP"
+/bin/rm -rf "$HOME/Applications/$APP_NAME.app" 2>/dev/null || true
+/bin/rm -rf "$HOME/Applications/CodexQuotaBar.app" 2>/dev/null || true
+/bin/rm -rf "$HOME/Applications/Codex Visual.app" 2>/dev/null || true
 /usr/bin/ditto "$SOURCE_APP" "$INSTALL_APP"
 /usr/bin/xattr -dr com.apple.quarantine "$INSTALL_APP" 2>/dev/null || true
 /usr/bin/open -a "$INSTALL_APP"

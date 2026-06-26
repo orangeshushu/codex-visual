@@ -3,64 +3,39 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="CodexVisual"
-EXECUTABLE_NAME="CodexVisual"
-OLD_EXECUTABLE_NAME="CodexQuotaBar"
 VOL_NAME="CodexVisual"
 BUILD_DIR="$ROOT_DIR/build"
-APP_PATH="$BUILD_DIR/$APP_NAME.app"
+PKG_PATH="$BUILD_DIR/$APP_NAME.pkg"
 DMG_ROOT="$BUILD_DIR/dmg-root"
 DMG_PATH="$BUILD_DIR/CodexVisual.dmg"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 CODE_SIGN_TIMESTAMP="${CODE_SIGN_TIMESTAMP:---timestamp}"
 
-"$ROOT_DIR/scripts/build_app.sh" >/dev/null
+"$ROOT_DIR/scripts/create_pkg.sh" >/dev/null
 
 /bin/rm -rf "$DMG_ROOT" "$DMG_PATH"
 /bin/mkdir -p "$DMG_ROOT"
 
-/usr/bin/ditto "$APP_PATH" "$DMG_ROOT/$APP_NAME.app"
-/bin/ln -s /Applications "$DMG_ROOT/Applications"
-
-/bin/cat > "$DMG_ROOT/卸载 CodexVisual.command" <<'SCRIPT'
-#!/usr/bin/env bash
-set -euo pipefail
-
-APP_NAME="CodexVisual"
-EXECUTABLE_NAME="CodexVisual"
-OLD_EXECUTABLE_NAME="CodexQuotaBar"
-
-/usr/bin/pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
-/usr/bin/pkill -x "$OLD_EXECUTABLE_NAME" 2>/dev/null || true
-/bin/rm -rf "/Applications/$APP_NAME.app"
-/bin/rm -rf "$HOME/Applications/$APP_NAME.app"
-/bin/rm -rf "/Applications/CodexQuotaBar.app"
-/bin/rm -rf "$HOME/Applications/CodexQuotaBar.app"
-/bin/rm -rf "/Applications/Codex Visual.app"
-/bin/rm -rf "$HOME/Applications/Codex Visual.app"
-/bin/rm -rf "$HOME/Library/Application Support/CodexVisual"
-/bin/rm -rf "$HOME/Library/Application Support/CodexQuotaBar"
-
-/usr/bin/osascript -e 'display dialog "CodexVisual 已卸载。" buttons {"好"} default button "好" with title "CodexVisual"'
-SCRIPT
-
-/bin/chmod +x "$DMG_ROOT/卸载 CodexVisual.command"
+/bin/cp "$PKG_PATH" "$DMG_ROOT/$APP_NAME.pkg"
+/bin/cp "$ROOT_DIR/scripts/uninstall.sh" "$DMG_ROOT/Uninstall CodexVisual.command"
+/bin/chmod +x "$DMG_ROOT/Uninstall CodexVisual.command"
 
 /bin/cat > "$DMG_ROOT/使用说明.txt" <<'TEXT'
 安装：
-1. 把 CodexVisual.app 拖到 Applications。
-2. 从 Applications 打开 CodexVisual.app。
-3. 菜单栏会显示 Codex 额度，同时会打开一个控制窗口。
-4. 如果菜单栏无法点击，请再次从 Applications 打开 CodexVisual.app，控制窗口会重新出现。
+1. 双击 CodexVisual.pkg。
+2. 按照 macOS Installer 的提示完成安装。
+3. 安装器会把 CodexVisual 安装到 /Applications 并打开应用。
+4. 菜单栏会显示 Codex 额度，同时会打开一个控制窗口。
 
 卸载：
 方法 1：打开 CodexVisual 控制窗口，点击“卸载 CodexVisual”。
-方法 2：双击“卸载 CodexVisual.command”。
+方法 2：双击 “Uninstall CodexVisual.command”。
 
 说明：
 这是一个本地菜单栏 app，只读取 Codex 自己记录的本地额度事件。
 会检查 ~/.codex/logs_2.sqlite 和 ~/.codex/sqlite/logs_2.sqlite。
 如果 Codex 暂时没有写入新的额度事件，菜单栏会显示 Codex -- / --%，控制窗口会显示原因。
-如果一直显示 Codex -- / --%，请先打开 Codex 并发送一条消息，然后在控制窗口里选择“复制诊断信息”。
+如果一直显示 Codex -- / --%，请先打开 Codex 并发送一条消息，然后在控制窗口里选择“立即刷新”。
 后续更新可以在控制窗口或 CodexVisual 菜单里选择“检查更新”，无需手动重新下载安装。
 菜单栏数字顺序是：5小时 / 7天，例如 Codex 67 / 95%。
 TEXT

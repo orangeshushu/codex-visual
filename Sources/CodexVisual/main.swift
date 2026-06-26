@@ -22,7 +22,11 @@ enum LanguageMode: String, CaseIterable {
             return .system
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+            if newValue == .system {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+            }
         }
     }
 }
@@ -104,7 +108,7 @@ enum AppStrings {
     }
 
     static var dateFormat: String {
-        usesChinese ? "M月d日 HH:mm" : "MMM d HH:mm"
+        usesChinese ? "M月d日 E HH:mm" : "EEE MMM d HH:mm"
     }
 
     static var shortTimeFormat: String {
@@ -159,8 +163,6 @@ enum AppStrings {
     static var codexLogs: String { text("Codex 日志", "Codex logs") }
     static var localCache: String { text("本地缓存", "local cache") }
     static var migratedCache: String { text("旧版缓存", "legacy cache") }
-    static var copyDiagnostics: String { text("复制诊断信息", "Copy Diagnostics") }
-    static var diagnosticsCopied: String { text("诊断信息已复制", "Diagnostics copied") }
     static var quotaOverview: String { text("Codex 额度", "Codex Quota") }
     static var controlWindowTitle: String { text("CodexVisual 控制窗口", "CodexVisual Control Window") }
     static var noQuotaYet: String { text("还没有读取到 Codex 额度。请打开 Codex 并发送一条消息，然后点击刷新。", "No Codex quota has been read yet. Open Codex, send one message, then click Refresh.") }
@@ -177,7 +179,8 @@ enum AppStrings {
     }
 
     static var missingEvent: String {
-        text("还没有读到 codex.rate_limits 事件", "No codex.rate_limits event has been found yet")
+        text("还没有读到当前有效的 codex.rate_limits 事件。请在当前登录的 Codex 账号中发送一条消息后再刷新。",
+             "No current codex.rate_limits event has been found yet. Send one message from the currently signed-in Codex account, then refresh.")
     }
 
     static var invalidLogRow: String {
@@ -228,11 +231,15 @@ enum AppStrings {
     }
 
     static func usedCompact(_ value: Int) -> String {
-        text("已用 \(value)%", "used \(value)%")
+        text("已用 \(value)%", "Used \(value)%")
     }
 
     static func resetCompact(_ value: String) -> String {
-        text("下次刷新: \(value)", "next reset: \(value)")
+        text("重置 \(value)", "Reset \(value)")
+    }
+
+    static var resetPending: String {
+        text("等待 Codex 更新", "waiting for Codex update")
     }
 
     static func sourceCompact(source: String, readTime: String) -> String {
@@ -297,7 +304,11 @@ struct QuotaWindow: Codable {
     }
 
     var remainingPercent: Int {
-        min(100, max(0, 100 - usedPercent))
+        min(100, max(0, 100 - effectiveUsedPercent))
+    }
+
+    var effectiveUsedPercent: Int {
+        resetDate <= Date() ? 0 : usedPercent
     }
 
     var resetDate: Date {
@@ -352,7 +363,9 @@ final class QuotaReader {
             let home = NSHomeDirectory()
             self.databasePaths = [
                 home + "/.codex/logs_2.sqlite",
-                home + "/.codex/sqlite/logs_2.sqlite"
+                home + "/.codex/sqlite/logs_2.sqlite",
+                home + "/.codex/logs.sqlite",
+                home + "/.codex/sqlite/logs.sqlite"
             ]
         }
     }
@@ -396,45 +409,63 @@ final class QuotaReader {
     }
 
     private func readFromLogs(databasePath: String) throws -> QuotaSnapshot? {
-        let exactEventClause = "instr(feedback_log_body, 'Received message {\"type\":\"codex.rate_limits\"') = 1"
-        if let snapshot = try readFromLogs(databasePath: databasePath, whereClause: exactEventClause, limit: 2000) {
-            return snapshot
+        guard let schema = try loadLogSchema(databasePath: databasePath) else {
+            return nil
         }
 
-        let broadEventClause = """
-        feedback_log_body like '%codex.rate_limits%'
-        and length(feedback_log_body) < 20000
-        and feedback_log_body not like '%function_call_arguments%'
-        and feedback_log_body not like '%exec_command%'
+        let body = quoteIdentifier(schema.bodyColumn)
+        let exactEventClause = """
+        (
+          \(body) like 'Received message {"type":"codex.rate_limits"%'
+          or \(body) like 'Received message {\\\"type\\\":\\\"codex.rate_limits\\\"%'
+          or (
+            \(body) like '%responses_websocket.stream_request%'
+            and (
+              \(body) like '%: websocket event: {"type":"codex.rate_limits"%'
+              or \(body) like '%: websocket event: {\\\"type\\\":\\\"codex.rate_limits\\\"%'
+            )
+          )
+        )
+        and \(body) not like '%exec_command%'
+        and \(body) not like '%tool exec_command%'
+        and \(body) not like '%*** Begin Patch%'
+        and \(body) not like '%Sources/CodexVisual%'
         """
-        return try readFromLogs(databasePath: databasePath, whereClause: broadEventClause, limit: 200)
+        return try readFromLogs(databasePath: databasePath, schema: schema, whereClause: exactEventClause, limit: 100)
     }
 
-    private func readFromLogs(databasePath: String, whereClause: String, limit: Int) throws -> QuotaSnapshot? {
+    private func readFromLogs(databasePath: String, schema: LogSchema, whereClause: String, limit: Int) throws -> QuotaSnapshot? {
+        let ts = quoteIdentifier(schema.timestampColumn)
+        let body = quoteIdentifier(schema.bodyColumn)
+        let id = quoteIdentifier(schema.idColumn ?? "rowid")
+        let orderColumns = [schema.timestampColumn, schema.timestampNanosColumn, schema.idColumn]
+            .compactMap { $0 }
+            .map { "\(quoteIdentifier($0)) desc" }
+            .joined(separator: ", ")
+        let recentLimit = max(limit * 20, 10_000)
         let query = """
-        with candidates as (
-            select
-                ts,
-                feedback_log_body,
-                instr(feedback_log_body, 'codex.rate_limits') as match_pos
+        with recent_ids as (
+            select \(id)
             from logs
-            where \(whereClause)
-            order by ts desc, ts_nanos desc, id desc
-            limit \(limit)
+            order by \(orderColumns)
+            limit \(recentLimit)
         )
         select
-            ts,
+            \(ts),
             substr(
-                feedback_log_body,
-                case when match_pos > 128 then match_pos - 128 else 1 end,
+                \(body),
+                case when instr(\(body), 'codex.rate_limits') > 128 then instr(\(body), 'codex.rate_limits') - 128 else 1 end,
                 100000
             )
-        from candidates
+        from logs
+        where \(id) in recent_ids
+          and \(whereClause)
+        order by \(orderColumns)
+        limit \(limit)
         ;
         """
 
         let output = try runSQLite(databasePath: databasePath, query: query)
-
         for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
             let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2, let timestamp = TimeInterval(parts[0]) else {
@@ -442,17 +473,63 @@ final class QuotaReader {
             }
 
             let body = String(parts[1])
-            if let event = extractRateLimitEvent(from: body), isCurrentRateLimitEvent(event) {
-                return QuotaSnapshot(
+            if let event = extractRateLimitEvent(from: body) {
+                let snapshot = QuotaSnapshot(
                     event: event,
-                    logDate: Date(timeIntervalSince1970: timestamp),
+                    logDate: date(fromDatabaseTimestamp: timestamp),
                     readDate: Date(),
                     source: .codexLogs
                 )
+
+                if isCurrentRateLimitEvent(event) {
+                    return snapshot
+                }
             }
         }
 
         return nil
+    }
+
+    private func loadLogSchema(databasePath: String) throws -> LogSchema? {
+        let output = try runSQLite(databasePath: databasePath, query: "pragma table_info(logs);")
+        let columns = output
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { line -> SQLiteColumn? in
+                let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
+                guard parts.count >= 3 else {
+                    return nil
+                }
+                return SQLiteColumn(name: String(parts[1]), type: String(parts[2]))
+            }
+
+        guard !columns.isEmpty else {
+            return nil
+        }
+
+        let names = columns.map(\.name)
+        let timestampColumn = firstExisting(in: names, candidates: ["ts", "timestamp", "created_at", "time", "date"]) ?? "ts"
+        let nanosColumn = firstExisting(in: names, candidates: ["ts_nanos", "timestamp_nanos", "nanos"])
+        let idColumn = firstExisting(in: names, candidates: ["id", "rowid"])
+        let bodyColumn = firstExisting(
+            in: names,
+            candidates: ["feedback_log_body", "body", "message", "text", "payload", "event", "json"]
+        ) ?? columns.first { column in
+            column.type.localizedCaseInsensitiveContains("text")
+                && ["body", "message", "payload", "event", "json", "log"].contains { namePart in
+                    column.name.localizedCaseInsensitiveContains(namePart)
+                }
+        }?.name
+
+        guard names.contains(timestampColumn), let bodyColumn, names.contains(bodyColumn) else {
+            return nil
+        }
+
+        return LogSchema(
+            timestampColumn: timestampColumn,
+            timestampNanosColumn: nanosColumn,
+            idColumn: idColumn,
+            bodyColumn: bodyColumn
+        )
     }
 
     private func isCurrentRateLimitEvent(_ event: RateLimitEvent) -> Bool {
@@ -485,6 +562,28 @@ final class QuotaReader {
         }
 
         return output
+    }
+
+    private func firstExisting(in names: [String], candidates: [String]) -> String? {
+        for candidate in candidates {
+            if names.contains(candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func quoteIdentifier(_ value: String) -> String {
+        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    private func date(fromDatabaseTimestamp timestamp: TimeInterval) -> Date {
+        if timestamp > 10_000_000_000 {
+            return Date(timeIntervalSince1970: timestamp / 1000)
+        }
+
+        return Date(timeIntervalSince1970: timestamp)
     }
 
     private func extractRateLimitEvent(from body: String) -> RateLimitEvent? {
@@ -588,11 +687,15 @@ final class QuotaReader {
                 lines.append("  log rows: \(total)")
             }
 
-            if let candidates = try? runSQLite(
-                databasePath: databasePath,
-                query: "select count(*) from logs where feedback_log_body like '%codex.rate_limits%';"
-            ).trimmingCharacters(in: .whitespacesAndNewlines) {
-                lines.append("  codex.rate_limits candidates: \(candidates)")
+            if let schema = try? loadLogSchema(databasePath: databasePath) {
+                lines.append("  detected timestamp column: \(schema.timestampColumn)")
+                lines.append("  detected body column: \(schema.bodyColumn)")
+                if let candidates = try? runSQLite(
+                    databasePath: databasePath,
+                    query: "select count(*) from logs where \(quoteIdentifier(schema.bodyColumn)) like '%codex.rate_limits%';"
+                ).trimmingCharacters(in: .whitespacesAndNewlines) {
+                    lines.append("  codex.rate_limits candidates: \(candidates)")
+                }
             }
         }
 
@@ -639,16 +742,31 @@ final class QuotaReader {
         do {
             let data = try Data(contentsOf: url)
             let cached = try JSONDecoder().decode(CachedSnapshot.self, from: data)
+            guard isCurrentRateLimitEvent(cached.event) else {
+                return nil
+            }
             return QuotaSnapshot(
                 event: cached.event,
                 logDate: Date(timeIntervalSince1970: cached.logTimestamp),
-                readDate: Date(timeIntervalSince1970: cached.cachedTimestamp),
+                readDate: Date(),
                 source: source
             )
         } catch {
             return nil
         }
     }
+}
+
+struct SQLiteColumn {
+    let name: String
+    let type: String
+}
+
+struct LogSchema {
+    let timestampColumn: String
+    let timestampNanosColumn: String?
+    let idColumn: String?
+    let bodyColumn: String
 }
 
 struct CachedSnapshot: Codable {
@@ -682,12 +800,56 @@ struct UpdateInfo {
     let downloadURL: URL
 }
 
+final class QuotaProgressView: NSView {
+    private let trackLayer = CALayer()
+    private let fillLayer = CALayer()
+    private var value: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
+        wantsLayer = true
+        layer?.masksToBounds = false
+        trackLayer.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
+        fillLayer.backgroundColor = NSColor.controlAccentColor.cgColor
+        layer?.addSublayer(trackLayer)
+        layer?.addSublayer(fillLayer)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let cornerRadius = bounds.height / 2
+        trackLayer.frame = bounds
+        trackLayer.cornerRadius = cornerRadius
+        fillLayer.frame = CGRect(x: 0, y: 0, width: bounds.width * value, height: bounds.height)
+        fillLayer.cornerRadius = cornerRadius
+        CATransaction.commit()
+    }
+
+    func update(remaining: Int, color: NSColor) {
+        value = CGFloat(min(100, max(0, remaining))) / 100
+        fillLayer.backgroundColor = color.cgColor
+        needsLayout = true
+    }
+}
+
 final class QuotaWindowView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
-    private let percentLabel = NSTextField(labelWithString: "")
-    private let suffixLabel = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
-    private let progress = NSProgressIndicator()
+    private let percentValueLabel = NSTextField(labelWithString: "")
+    private let percentSymbolLabel = NSTextField(labelWithString: "%")
+    private let usedLabel = NSTextField(labelWithString: "")
+    private let resetLabel = NSTextField(labelWithString: "")
+    private let progress = QuotaProgressView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -700,7 +862,7 @@ final class QuotaWindowView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: 86)
+        NSSize(width: NSView.noIntrinsicMetric, height: 72)
     }
 
     private func configure() {
@@ -708,66 +870,83 @@ final class QuotaWindowView: NSView {
         layer?.cornerRadius = 8
         layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
 
-        nameLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         nameLabel.textColor = .labelColor
 
-        percentLabel.font = .monospacedDigitSystemFont(ofSize: 30, weight: .bold)
-        percentLabel.textColor = .labelColor
-        percentLabel.alignment = .right
-        percentLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        percentValueLabel.font = .monospacedDigitSystemFont(ofSize: 25, weight: .bold)
+        percentValueLabel.textColor = .labelColor
+        percentValueLabel.alignment = .right
+        percentValueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        suffixLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        suffixLabel.textColor = .secondaryLabelColor
+        percentSymbolLabel.font = .monospacedDigitSystemFont(ofSize: 16, weight: .bold)
+        percentSymbolLabel.textColor = .labelColor
+        percentSymbolLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        detailLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        usedLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        usedLabel.textColor = .secondaryLabelColor
+        usedLabel.lineBreakMode = .byTruncatingTail
+        usedLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
-        progress.style = .bar
-        progress.isIndeterminate = false
-        progress.minValue = 0
-        progress.maxValue = 100
-        progress.controlSize = .small
+        resetLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        resetLabel.textColor = .secondaryLabelColor
+        resetLabel.alignment = .right
+        resetLabel.lineBreakMode = .byTruncatingTail
+        resetLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let percentStack = NSStackView(views: [percentLabel, suffixLabel])
+        let percentStack = NSStackView(views: [percentValueLabel, percentSymbolLabel])
         percentStack.orientation = .horizontal
         percentStack.alignment = .firstBaseline
-        percentStack.spacing = 6
+        percentStack.spacing = 3
+
+        percentStack.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let topStack = NSStackView(views: [nameLabel, NSView(), percentStack])
         topStack.orientation = .horizontal
         topStack.alignment = .centerY
-        topStack.spacing = 8
+        topStack.spacing = 6
 
-        let stack = NSStackView(views: [topStack, progress, detailLabel])
+        let detailStack = NSStackView(views: [usedLabel, NSView(), resetLabel])
+        detailStack.orientation = .horizontal
+        detailStack.alignment = .centerY
+        detailStack.spacing = 8
+
+        let stack = NSStackView(views: [topStack, progress, detailStack])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
             progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            progress.heightAnchor.constraint(equalToConstant: 6)
+            progress.heightAnchor.constraint(equalToConstant: 5),
+            detailStack.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
     }
 
     func update(name: String, remaining: Int, used: Int, resetText: String) {
         nameLabel.stringValue = name
-        percentLabel.stringValue = "\(remaining)%"
-        suffixLabel.stringValue = AppStrings.remaining
-        detailLabel.stringValue = "\(AppStrings.usedCompact(used)) · \(AppStrings.resetCompact(resetText))"
-        progress.doubleValue = Double(remaining)
+        percentValueLabel.stringValue = "\(remaining)"
+        usedLabel.stringValue = AppStrings.usedCompact(used)
+        resetLabel.stringValue = AppStrings.resetCompact(resetText)
+        let color: NSColor
+        if remaining <= 20 {
+            color = .systemRed
+        } else if remaining <= 50 {
+            color = .systemYellow
+        } else {
+            color = .controlAccentColor
+        }
+        progress.update(remaining: remaining, color: color)
 
         if remaining <= 20 {
             layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12).cgColor
         } else if remaining <= 50 {
-            layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.12).cgColor
+            layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.16).cgColor
         } else {
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.10).cgColor
         }
@@ -792,20 +971,20 @@ final class QuotaOverviewView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 532, height: 268)
+        NSSize(width: 420, height: 230)
     }
 
     private func configure() {
         frame.size = intrinsicContentSize
 
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = .labelColor
 
-        planLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        planLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         planLabel.textColor = .secondaryLabelColor
         planLabel.alignment = .right
 
-        sourceLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        sourceLabel.font = .systemFont(ofSize: 10.5, weight: .regular)
         sourceLabel.textColor = .secondaryLabelColor
         sourceLabel.lineBreakMode = .byTruncatingTail
         sourceLabel.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -818,20 +997,20 @@ final class QuotaOverviewView: NSView {
         let stack = NSStackView(views: [header, fiveHourView, sevenDayView, sourceLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 7
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             fiveHourView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             sevenDayView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fiveHourView.heightAnchor.constraint(equalToConstant: 86),
-            sevenDayView.heightAnchor.constraint(equalToConstant: 86),
+            fiveHourView.heightAnchor.constraint(equalToConstant: 72),
+            sevenDayView.heightAnchor.constraint(equalToConstant: 72),
             sourceLabel.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
     }
@@ -845,13 +1024,13 @@ final class QuotaOverviewView: NSView {
         fiveHourView.update(
             name: AppStrings.fiveHourQuota,
             remaining: primary.remainingPercent,
-            used: primary.usedPercent,
+            used: primary.effectiveUsedPercent,
             resetText: resetText(for: primary.resetDate, timeFormatter: timeFormatter)
         )
         sevenDayView.update(
             name: AppStrings.sevenDayQuota,
             remaining: secondary.remainingPercent,
-            used: secondary.usedPercent,
+            used: secondary.effectiveUsedPercent,
             resetText: resetText(for: secondary.resetDate, timeFormatter: timeFormatter)
         )
         sourceLabel.stringValue = AppStrings.sourceCompact(
@@ -865,6 +1044,32 @@ final class QuotaOverviewView: NSView {
         if seconds > 0, seconds < 3600 {
             let rounded = max(0, Int(ceil(seconds)))
             return String(format: "%02d:%02d", rounded / 60, rounded % 60)
+        }
+
+        if seconds <= 0 {
+            return AppStrings.resetPending
+        }
+
+        let hourMinuteFormatter = DateFormatter()
+        hourMinuteFormatter.locale = timeFormatter.locale
+        hourMinuteFormatter.dateFormat = "HH:mm"
+
+        let dateTimeFormatter = DateFormatter()
+        dateTimeFormatter.locale = timeFormatter.locale
+        dateTimeFormatter.dateFormat = AppStrings.usesChinese ? "M月d日 E HH:mm" : "EEE MMM d HH:mm"
+
+        if Calendar.current.isDateInToday(date) {
+            return AppStrings.text(
+                "今天 \(dateTimeFormatter.string(from: date))",
+                "Today \(hourMinuteFormatter.string(from: date))"
+            )
+        }
+
+        if Calendar.current.isDateInTomorrow(date) {
+            return AppStrings.text(
+                "明天 \(dateTimeFormatter.string(from: date))",
+                "Tomorrow \(dateTimeFormatter.string(from: date))"
+            )
         }
 
         return timeFormatter.string(from: date)
@@ -900,7 +1105,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let sixtySecondRefreshItem = NSMenuItem()
     private let fiveMinuteRefreshItem = NSMenuItem()
     private let manualRefreshItem = NSMenuItem()
-    private let diagnosticsItem = NSMenuItem()
     private let openDashboardItem = NSMenuItem()
     private let refreshItem = NSMenuItem()
     private let checkUpdatesItem = NSMenuItem()
@@ -912,7 +1116,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let windowOverviewView = QuotaOverviewView()
     private let windowErrorLabel = NSTextField(wrappingLabelWithString: AppStrings.noQuotaYet)
     private let windowRefreshButton = NSButton()
-    private let windowDiagnosticsButton = NSButton()
     private let windowUpdateButton = NSButton()
     private let windowUninstallButton = NSButton()
     private let windowQuitButton = NSButton()
@@ -955,6 +1158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configureMenu() {
         configureStatusButton()
+        statusItem.menu = menu
         statusItem.button?.title = AppStrings.statusTitlePlaceholder
         overviewItem.view = overviewView
         overviewItem.isHidden = true
@@ -975,10 +1179,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openDashboardItem.action = #selector(openDashboard(_:))
         openDashboardItem.target = self
         menu.addItem(openDashboardItem)
-
-        diagnosticsItem.action = #selector(copyDiagnostics(_:))
-        diagnosticsItem.target = self
-        menu.addItem(diagnosticsItem)
 
         refreshItem.action = #selector(refresh(_:))
         refreshItem.keyEquivalent = "r"
@@ -1011,20 +1211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         button.image = nil
         button.imagePosition = .noImage
-
-        button.target = self
-        button.action = #selector(showMenu(_:))
-        button.sendAction(on: [.leftMouseDown, .rightMouseDown])
-    }
-
-    @objc private func showMenu(_ sender: Any?) {
-        guard let button = statusItem.button else {
-            return
-        }
-
-        button.highlight(true)
-        statusItem.popUpMenu(menu)
-        button.highlight(false)
     }
 
     private func configureLanguageMenu() {
@@ -1090,13 +1276,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fiveMinuteRefreshItem.title = AppStrings.refreshEvery5Minutes
         manualRefreshItem.title = AppStrings.refreshManual
         openDashboardItem.title = AppStrings.openDashboard
-        diagnosticsItem.title = AppStrings.copyDiagnostics
         refreshItem.title = AppStrings.refreshNow
         checkUpdatesItem.title = AppStrings.checkForUpdates
         uninstallItem.title = AppStrings.uninstall
         quitItem.title = AppStrings.quit
         windowRefreshButton.title = AppStrings.refreshNow
-        windowDiagnosticsButton.title = AppStrings.copyDiagnostics
         windowUpdateButton.title = AppStrings.checkForUpdates
         windowUninstallButton.title = AppStrings.uninstall
         windowQuitButton.title = AppStrings.quit
@@ -1216,14 +1400,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowErrorLabel.translatesAutoresizingMaskIntoConstraints = false
 
         configureWindowButton(windowRefreshButton, action: #selector(refresh(_:)))
-        configureWindowButton(windowDiagnosticsButton, action: #selector(copyDiagnostics(_:)))
         configureWindowButton(windowUpdateButton, action: #selector(checkForUpdates(_:)))
         configureWindowButton(windowUninstallButton, action: #selector(uninstall(_:)))
         configureWindowButton(windowQuitButton, action: #selector(quit(_:)))
 
         let buttonStack = NSStackView(views: [
             windowRefreshButton,
-            windowDiagnosticsButton,
             windowUpdateButton,
             windowUninstallButton,
             windowQuitButton
@@ -1246,14 +1428,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -18),
-            windowOverviewView.widthAnchor.constraint(equalToConstant: 532),
-            windowErrorLabel.widthAnchor.constraint(equalToConstant: 532),
+            windowOverviewView.widthAnchor.constraint(equalToConstant: 420),
+            windowErrorLabel.widthAnchor.constraint(equalToConstant: 420),
             windowErrorLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
-            buttonStack.widthAnchor.constraint(equalToConstant: 532)
+            buttonStack.widthAnchor.constraint(equalToConstant: 420)
         ])
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 568, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 456, height: 316),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -1274,17 +1456,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
         button.heightAnchor.constraint(equalToConstant: 32).isActive = true
-    }
-
-    @objc private func copyDiagnostics(_ sender: Any?) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(reader.diagnostics(), forType: .string)
-        diagnosticsItem.title = AppStrings.diagnosticsCopied
-        windowDiagnosticsButton.title = AppStrings.diagnosticsCopied
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.diagnosticsItem.title = AppStrings.copyDiagnostics
-            self?.windowDiagnosticsButton.title = AppStrings.copyDiagnostics
-        }
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
@@ -1472,11 +1643,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         /bin/rm -rf "$HOME/Applications/Codex Visual.app"
         /bin/rm -rf "$HOME/Library/Application Support/CodexVisual"
         /bin/rm -rf "$HOME/Library/Application Support/CodexQuotaBar"
-        if [[ -w "/Applications" ]]; then
-          /bin/rm -rf "/Applications/CodexVisual.app"
-          /bin/rm -rf "/Applications/CodexQuotaBar.app"
-          /bin/rm -rf "/Applications/Codex Visual.app"
-        fi
+        /bin/rm -rf "$HOME/Library/Caches/com.orangeshushu.CodexVisual"
+        /bin/rm -rf "$HOME/Library/Caches/CodexVisual"
+        /bin/rm -f "$HOME/Library/Preferences/com.orangeshushu.CodexVisual.plist"
+        /bin/rm -rf "$HOME/Library/HTTPStorages/com.orangeshushu.CodexVisual"
+        /bin/rm -rf "$HOME/Library/WebKit/com.orangeshushu.CodexVisual"
+        /bin/rm -rf "$HOME/Library/Containers/com.orangeshushu.CodexVisual"
+        /bin/rm -rf "/Applications/CodexVisual.app" 2>/dev/null || true
+        /bin/rm -rf "/Applications/CodexQuotaBar.app" 2>/dev/null || true
+        /bin/rm -rf "/Applications/Codex Visual.app" 2>/dev/null || true
         /usr/bin/osascript -e 'display notification "\(AppStrings.uninstallDone)" with title "CodexVisual"' 2>/dev/null || true
         /bin/rm -f "$0"
         """
