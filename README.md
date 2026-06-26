@@ -60,6 +60,8 @@ CodexVisual reads quota events from the local Codex log database. If you sign in
 
 If the menu bar shows `Codex -- / --%`, open Codex once and send a message so Codex can write a fresh quota event. Then click CodexVisual in the menu bar and choose `Copy Diagnostics` to copy local log status.
 
+If the menu bar item appears but does not open when clicked, install CodexVisual 1.0.6 or newer. Version 1.0.6 changes the status item to handle left-click and right-click directly before opening the menu.
+
 ### Resource Usage
 
 CodexVisual is a small AppKit menu bar app. In normal use it sleeps between timer ticks, reads local SQLite logs, updates the menu bar text, and does not keep network connections open.
@@ -179,6 +181,8 @@ CodexVisual 读取的是本地 Codex 日志中的额度事件。如果你在 Cod
 ### 排查
 
 如果菜单栏显示 `Codex -- / --%`，先打开 Codex 并发送一条消息，让 Codex 写入新的额度事件。然后点击菜单栏里的 CodexVisual，选择“复制诊断信息”，即可复制本地日志状态。
+
+如果菜单栏项目已经显示，但点击后打不开菜单，请安装 CodexVisual 1.0.6 或更新版本。1.0.6 改为直接处理左键和右键点击后再打开菜单。
 
 ### 资源占用
 
