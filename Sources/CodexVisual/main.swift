@@ -508,7 +508,7 @@ final class QuotaReader {
         }
     }
 
-    func readLatest() throws -> QuotaSnapshot {
+    func readLatest(allowCache: Bool = true) throws -> QuotaSnapshot {
         if let sessionSnapshot = readFromSessions() {
             saveCache(snapshot: sessionSnapshot)
             return sessionSnapshot
@@ -536,7 +536,7 @@ final class QuotaReader {
             }
         }
 
-        if let cachedSnapshot = readCache() {
+        if allowCache, let cachedSnapshot = readCache() {
             return cachedSnapshot
         }
 
@@ -670,9 +670,10 @@ final class QuotaReader {
         guard let window else {
             return nil
         }
+        let usedPercent = min(100, max(0, Int(ceil(window.usedPercent))))
 
         return QuotaWindow(
-            usedPercent: Int(window.usedPercent.rounded()),
+            usedPercent: usedPercent,
             windowMinutes: window.windowMinutes,
             resetAfterSeconds: max(0, Int(window.resetsAt - Date().timeIntervalSince1970)),
             resetAt: window.resetsAt
@@ -1461,13 +1462,13 @@ enum QuotaStatusImage {
             .foregroundColor: MenuBarTextGroup.percent.currentColor.resolved(for: remaining)
         ]
         let resetAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.2, weight: .heavy),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.6, weight: .heavy),
             .foregroundColor: MenuBarTextGroup.reset.currentColor.resolved(for: remaining)
         ]
 
         (label as NSString).draw(at: NSPoint(x: 8, y: y - 1), withAttributes: labelAttributes)
 
-        let barRect = NSRect(x: 26, y: y + 1.5, width: 64, height: 5)
+        let barRect = NSRect(x: 26, y: y + 1.5, width: 58, height: 5)
         let trackPath = NSBezierPath(roundedRect: barRect, xRadius: 2, yRadius: 2)
         secondaryColor.withAlphaComponent(0.28).setFill()
         trackPath.fill()
@@ -1478,8 +1479,8 @@ enum QuotaStatusImage {
         barColor.setFill()
         fillPath.fill()
 
-        ("\(remaining)%" as NSString).draw(at: NSPoint(x: 98, y: y - 1.5), withAttributes: percentAttributes)
-        (resetText as NSString).draw(at: NSPoint(x: 134, y: y - 0.8), withAttributes: resetAttributes)
+        ("\(remaining)%" as NSString).draw(at: NSPoint(x: 90, y: y - 1.5), withAttributes: percentAttributes)
+        (resetText as NSString).draw(at: NSPoint(x: 126, y: y - 0.6), withAttributes: resetAttributes)
     }
 
     private static func resetShortText(for date: Date) -> String {
@@ -1488,14 +1489,15 @@ enum QuotaStatusImage {
             return "now"
         }
 
-        let minutes = max(1, Int(ceil(seconds / 60)))
+        let minutes = max(1, Int(floor(seconds / 60)))
         if minutes < 60 {
             return "\(minutes)m"
         }
 
-        let hours = Int(ceil(Double(minutes) / 60))
+        let hours = minutes / 60
+        let remainderMinutes = minutes % 60
         if hours < 24 {
-            return "\(hours)h"
+            return remainderMinutes == 0 ? "\(hours)h" : "\(hours)h\(remainderMinutes)m"
         }
 
         let days = hours / 24
@@ -1908,7 +1910,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func refresh(_ sender: Any?) {
         do {
-            let snapshot = try reader.readLatest()
+            let snapshot = try reader.readLatest(allowCache: sender == nil)
             update(snapshot)
         } catch {
             statusItem.length = NSStatusItem.variableLength
@@ -2343,6 +2345,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.title = ""
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyDown
+            button.image = nil
             button.effectiveAppearance.performAsCurrentDrawingAppearance {
                 button.image = QuotaStatusImage.make(
                     fiveHour: primary.remainingPercent,
@@ -2351,6 +2354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     sevenDayReset: secondary.resetDate
                 )
             }
+            button.needsDisplay = true
         case .numbers:
             statusItem.length = NSStatusItem.variableLength
             button.image = nil
