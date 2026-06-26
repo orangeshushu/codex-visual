@@ -18,7 +18,10 @@ The first number is the remaining 5-hour quota. The second number is the remaini
 
 ### Download
 
-[Download CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+Latest macOS version: **1.0.9**
+
+- [Download CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+- [Download CodexVisual 1.0.9](https://github.com/orangeshushu/CodexVisual/releases/download/v1.0.9/CodexVisual.dmg)
 
 Open `CodexVisual.dmg`, then double-click `CodexVisual.pkg` and follow the macOS Installer prompts.
 
@@ -90,7 +93,9 @@ Click the menu bar item to see quota cards, reset times, the selected refresh mo
 
 ### Install, Update, Uninstall, and DMG
 
-Download the latest DMG directly: [CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg).
+Download the latest macOS DMG directly: [CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg).
+
+The current versioned macOS download is [CodexVisual 1.0.9](https://github.com/orangeshushu/CodexVisual/releases/download/v1.0.9/CodexVisual.dmg).
 
 Create a macOS DMG package. The DMG contains a standard macOS Installer package instead of a drag-to-Applications layout:
 
@@ -122,7 +127,7 @@ Create the notarization profile once with:
 xcrun notarytool store-credentials codexvisual-notary --apple-id you@example.com --team-id TEAMID --password xxxx-xxxx-xxxx-xxxx
 ```
 
-The public GitHub release should upload the stapled `build/CodexVisual.dmg`.
+The public GitHub release should upload the stapled `build/CodexVisual.dmg`. Pushing a `v*` tag can also run the `Release macOS` GitHub Actions workflow when the required signing and notarization secrets are configured.
 
 Install or uninstall directly:
 
@@ -151,7 +156,10 @@ Codex 67 / 95%
 
 ### 下载
 
-[下载 CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+最新 macOS 版本：**1.0.9**
+
+- [下载 CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)
+- [下载 CodexVisual 1.0.9](https://github.com/orangeshushu/CodexVisual/releases/download/v1.0.9/CodexVisual.dmg)
 
 打开 `CodexVisual.dmg` 后，双击 `CodexVisual.pkg`，并按照 macOS 安装器提示完成安装。
 
@@ -217,7 +225,9 @@ open build/CodexVisual.app
 
 ### 安装、更新、卸载和 DMG
 
-直接下载最新版 DMG：[CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)。
+直接下载最新版 macOS DMG：[CodexVisual.dmg](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual.dmg)。
+
+当前版本的固定下载链接是：[CodexVisual 1.0.9](https://github.com/orangeshushu/CodexVisual/releases/download/v1.0.9/CodexVisual.dmg)。
 
 生成 macOS DMG 安装包。DMG 内包含标准 macOS Installer 包，不再使用拖拽到 Applications 的安装方式：
 
@@ -249,7 +259,7 @@ spctl -a -vv -t install build/CodexVisual.dmg
 xcrun notarytool store-credentials codexvisual-notary --apple-id you@example.com --team-id TEAMID --password xxxx-xxxx-xxxx-xxxx
 ```
 
-GitHub Release 应上传完成 staple 之后的 `build/CodexVisual.dmg`。
+GitHub Release 应上传完成 staple 之后的 `build/CodexVisual.dmg`。如果仓库已配置签名和公证所需的 secrets，推送 `v*` tag 也可以触发 `Release macOS` GitHub Actions workflow 自动发布。
 
 也可以直接用脚本安装或卸载：
 
