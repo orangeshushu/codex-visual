@@ -1,10 +1,10 @@
-# CodexVisual Windows
+﻿# CodexVisual Windows
 
 This folder contains the Windows version of CodexVisual.
 
 ## Download
 
-Latest Windows version: **1.0.12**
+Latest Windows version: **1.0.13**
 
 Download the latest Windows executable:
 
