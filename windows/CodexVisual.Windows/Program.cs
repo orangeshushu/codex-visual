@@ -10,15 +10,15 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        using var mutex = new Mutex(true, "orangeshushu.CodexVisual.Windows", out var created);
-        if (!created)
-        {
-            return;
-        }
-
         if (args.Contains("--diagnostics", StringComparer.OrdinalIgnoreCase))
         {
             Console.WriteLine(new QuotaReader().Diagnostics());
+            return;
+        }
+
+        using var mutex = new Mutex(true, "orangeshushu.CodexVisual.Windows", out var created);
+        if (!created)
+        {
             return;
         }
 

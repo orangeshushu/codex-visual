@@ -229,7 +229,7 @@ internal sealed class QuotaReader
             }
 
             var snapshot = DecodeSessionRateLimitLine(line);
-            if (snapshot is not null && IsCurrentRateLimitEvent(snapshot.Event))
+            if (snapshot is not null && IsCurrentRateLimitEvent(snapshot.Event) && IsUsefulSessionSnapshot(snapshot))
             {
                 return snapshot;
             }
@@ -286,6 +286,12 @@ internal sealed class QuotaReader
             ResetAfterSeconds = Math.Max(0, (int)(window.ResetsAt - DateTimeOffset.Now.ToUnixTimeSeconds())),
             ResetAt = window.ResetsAt
         };
+    }
+
+    private static bool IsUsefulSessionSnapshot(QuotaSnapshot snapshot)
+    {
+        var limits = snapshot.Event.RateLimits;
+        return limits.Primary.UsedPercent > 0 || limits.Secondary.UsedPercent > 0;
     }
 
     private static DateTimeOffset? ParseSessionTimestamp(string value)
