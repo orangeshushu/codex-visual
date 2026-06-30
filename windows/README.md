@@ -4,6 +4,8 @@ This folder contains the Windows version of CodexVisual.
 
 ## Download
 
+Latest Windows version: **1.0.12**
+
 Download the latest Windows executable:
 
 [CodexVisual-Windows.exe](https://github.com/orangeshushu/CodexVisual/releases/latest/download/CodexVisual-Windows.exe)
